@@ -1,0 +1,44 @@
+name: Build APK
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TG_TOKEN: ${{ secrets.TG_TOKEN }}
+      TG_CHAT: ${{ secrets.TG_CHAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: npm install
+      - run: npx cap add android
+      - run: sed -i "s/const APP_VER='[^']*'/const APP_VER='$(cat VERSION)'/" www/index.html
+      - run: npx cap sync android
+      - run: bash scripts/patch-android.sh
+      - run: chmod +x android/gradlew && cd android && ./gradlew assembleDebug
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk SIRIUS-TR-JOURNAL.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SIRIUS-TR-JOURNAL-apk
+          path: SIRIUS-TR-JOURNAL.apk
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: APK build ${{ github.run_number }}
+          files: SIRIUS-TR-JOURNAL.apk
+      - name: Post APK to Telegram
+        if: env.TG_TOKEN != ''
+        run: |
+          R=$(curl -s -F chat_id=$TG_CHAT -F document=@SIRIUS-TR-JOURNAL.apk -F caption="Trade Journal v$(cat VERSION)" https://api.telegram.org/bot$TG_TOKEN/sendDocument)
+          MID=$(echo "$R" | python3 -c "import sys,json;print(json.load(sys.stdin)['result']['message_id'])")
+          curl -s https://api.telegram.org/bot$TG_TOKEN/pinChatMessage -d chat_id=$TG_CHAT -d message_id=$MID
